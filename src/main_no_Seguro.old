@@ -1,0 +1,92 @@
+#define TINY_GSM_MODEM_SIM7000  // Define el modelo de módem
+#include <TinyGsmClient.h>
+#include <PubSubClient.h>
+
+// Configura el puerto serial para debug y el del módem
+#define MODEM_RX 16  // Pin RX del módem
+#define MODEM_TX 17  // Pin TX del módem
+#define MODEM_BAUD 115200
+
+TinyGsm modem(Serial2);           // Instancia para el módem SIM7000
+TinyGsmClient client(modem);      // Instancia para el cliente de TinyGSM
+PubSubClient mqtt(client);        // Cliente MQTT
+
+// Configura tu APN, broker y demás
+const char apn[] = "igprs.claro.com.ar"; // Cambiar según tu operador
+const char broker[] = "serverqst.com";
+const int port = 1883;
+const char topic[] = "esp32/test";
+
+// Tiempo entre publicaciones
+unsigned long lastSend = 0;
+const unsigned long interval = 10000; // 10 segundos
+
+// Declaración de la función connectMQTT antes de usarla
+void connectMQTT() {
+  Serial.print("Conectando al broker MQTT...");
+  while (!mqtt.connect("esp32client")) {
+    Serial.print(".");
+    delay(1000);
+  }
+  Serial.println("Conectado al broker!");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(10);
+
+  // Inicializa Serial2 para el módem
+  Serial2.begin(MODEM_BAUD, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(3000);
+
+  Serial.println("Enviando comando AT al módem...");
+  
+  // Envía el comando AT y espera una respuesta
+  Serial2.println("AT");  // Comando AT básico para probar la comunicación
+  
+  // Lee la respuesta del módem
+  while (Serial2.available()) {
+    String response = Serial2.readString(); // Lee la respuesta
+    Serial.println(response);  // Imprime la respuesta en el monitor serie
+  }
+
+  Serial.println("Inicializando módem...");
+  modem.restart();
+
+  Serial.println("Conectando a red celular...");
+  if (!modem.waitForNetwork()) {
+    Serial.println("No hay red");
+    while (true);
+  }
+
+  if (!modem.gprsConnect(apn, "", "")) {
+    Serial.println("Fallo GPRS");
+    while (true);
+  }
+
+  Serial.println("Conectado a GPRS");
+
+  mqtt.setServer(broker, port);
+  connectMQTT();  // Ahora la función connectMQTT está declarada y puede ser llamada
+}
+
+void loop() {
+  if (!mqtt.connected()) {
+    connectMQTT();
+  }
+
+  mqtt.loop();
+
+  if (millis() - lastSend > interval) {
+    lastSend = millis();
+    String payload = "Hola desde ESP32 + SIM7000";
+    Serial.print("Publicando: ");
+    Serial.println(payload);
+
+    if (mqtt.publish(topic, payload.c_str())) {
+      Serial.println("Publicado OK");
+    } else {
+      Serial.println("Fallo al publicar");
+    }
+  }
+}
